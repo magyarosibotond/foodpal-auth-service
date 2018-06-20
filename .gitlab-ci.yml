@@ -1,0 +1,64 @@
+# Templates 
+
+.build_template: &build_definition
+  stage: build
+  image: botix1/docker-aws-deploy
+  services:
+    - docker:dind
+  before_script:
+    - "$(aws ecr get-login | sed -e 's/-e none//g')"
+  artifacts:
+    paths:
+      - image.tar
+    expire_in: '60 mins'
+  script:
+    - docker build -t build .
+    - docker save -o image.tar build
+
+.release_template: &release_definition
+  stage: release
+  image: botix1/docker-aws-deploy
+  services:
+    - docker:dind
+  before_script:
+    - "$(aws ecr get-login | sed -e 's/-e none//g')"
+  script:
+    - docker load -i image.tar
+    - docker tag $(docker images -q build) $IMAGE
+    - docker push $IMAGE
+
+.deploy_template: &deploy_definition
+  stage: deploy
+  image: silintl/ecs-deploy
+  script:
+    - ./bin/ecs-deploy -r $REGION -c $ENV -n $ENV-$APP_NAME -i $IMAGE
+
+# Deployment stages
+
+stages:
+  - build
+  - release
+  - deploy
+
+build-image:
+  <<: *build_definition
+  only:
+    - master
+
+push-image:
+  <<: *release_definition
+  variables:
+    IMAGE: 869720871040.dkr.ecr.eu-central-1.amazonaws.com/foodpal-auth-service:$CI_BUILD_REF
+  only:
+    - master
+
+staging:
+  <<: *deploy_definition
+  variables:
+    APP_NAME: foodpal-auth-service
+    ENV: staging
+    REGION: eu-central-1
+    IMAGE: 869720871040.dkr.ecr.eu-central-1.amazonaws.com/foodpal-auth-service:$CI_BUILD_REF
+  environment: staging
+  only:
+    - master
